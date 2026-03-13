@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Kinematic Tensor Engine | Interactive Dashboard</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <link rel="stylesheet" href="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.css" />
+    <script src="https://unpkg.com/@geoman-io/leaflet-geoman-free@latest/dist/leaflet-geoman.min.js"></script>
+
+    <style>
+        body { margin: 0; background: #0a0a0a; color: white; font-family: 'Inter', -apple-system, sans-serif; overflow: hidden; }
+        #map { height: 100vh; width: 100vw; z-index: 1; }
+        
+        #controls {
+            position: absolute; top: 20px; right: 20px; z-index: 1000;
+            background: rgba(18, 18, 18, 0.95); padding: 25px; border-radius: 12px;
+            border: 1px solid #333; backdrop-filter: blur(12px);
+            width: 300px; box-shadow: 0 10px 30px rgba(0,0,0,0.6);
+        }
+
+        h2 { margin: 0 0 10px 0; color: #f39c12; font-size: 1.3rem; letter-spacing: 0.5px; }
+        p { font-size: 0.85rem; color: #888; line-height: 1.5; margin-bottom: 20px; }
+
+        .btn-group { display: flex; flex-direction: column; gap: 12px; }
+        
+        button {
+            background: #f39c12; border: none; padding: 14px;
+            color: white; font-weight: 700; cursor: pointer; border-radius: 8px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            text-transform: uppercase; font-size: 0.75rem; letter-spacing: 1px;
+        }
+
+        button:hover { background: #e67e22; transform: translateY(-2px); box-shadow: 0 5px 15px rgba(243, 156, 18, 0.3); }
+        button:disabled { background: #333; color: #666; cursor: not-allowed; transform: none; box-shadow: none; }
+        button.secondary { background: #333; }
+        button.secondary:hover { background: #444; }
+
+        /* Legend Styling */
+        .legend { margin-top: 20px; padding-top: 15px; border-top: 1px solid #222; }
+        .legend-bar {
+            height: 10px; width: 100%;
+            background: linear-gradient(to right, #2c3e50, #8e44ad, #c0392b, #f39c12, #f1e740);
+            border-radius: 4px; margin-bottom: 8px;
+        }
+        .legend-labels {
+            display: flex; justify-content: space-between;
+            font-size: 0.65rem; color: #888; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+
+        .stats {
+            margin-top: 15px; font-family: 'JetBrains Mono', monospace; 
+            font-size: 0.8rem; color: #00ff00; line-height: 1.6;
+        }
+
+        #modalOverlay {
+            display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8); z-index: 9999; justify-content: center; align-items: center;
+            backdrop-filter: blur(4px);
+        }
+        .modal {
+            background: #111; padding: 35px; border-radius: 16px; border: 1px solid #333;
+            width: 380px; text-align: center; box-shadow: 0 20px 50px rgba(0,0,0,1);
+        }
+
+        .spinner {
+            display: none; border: 3px solid rgba(255,255,255,0.1); border-top: 3px solid #f39c12;
+            border-radius: 50%; width: 24px; height: 24px; animation: spin 1s linear infinite;
+            margin: 15px auto 0;
+        }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+
+<div id="modalOverlay">
+    <div class="modal">
+        <h3 style="margin: 0 0 15px 0; color: #f39c12;">Initialize Area?</h3>
+        <p style="color: #aaa; font-size: 0.9rem;">Compile a new Adjacency Matrix and re-initialize the GAT model for this region?</p>
+        <div class="btn-group" style="flex-direction: row;">
+            <button class="secondary" onclick="closeModal()" style="flex: 1;">Cancel</button>
+            <button id="confirmReinit" style="flex: 1;">Initialize</button>
+        </div>
+        <div id="modalSpinner" class="spinner"></div>
+    </div>
+</div>
+
+<div id="controls">
+    <h2>Kinematic Engine</h2>
+    <p>Graph Attention Network (GAT)<br>Tensor Logic & Fluid Dynamics</p>
+    
+    <div class="btn-group">
+        <button id="simBtn" onclick="runStep()">Simulate Next Frame</button>
+    </div>
+
+    <div class="legend">
+        <div class="legend-bar"></div>
+        <div class="legend-labels">
+            <span>Clear</span>
+            <span>Flowing</span>
+            <span>Jammed</span>
+        </div>
+    </div>
+
+    <div id="metrics" class="stats">System ready.<br>Draw a rectangle to begin.</div>
+</div>
+
+<div id="map"></div>
+
+<script>
+    const map = L.map('map').setView([39.9526, -75.1652], 14);
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+        attribution: '&copy; OpenStreetMap'
+    }).addTo(map);
+
+    map.pm.addControls({
+        position: 'topleft',
+        drawRectangle: true, drawCircle: false, drawMarker: false, 
+        drawPolyline: false, drawPolygon: false, drawCircleMarker: false,
+    });
+
+    let geojsonLayer;
+    let pendingBbox = null;
+
+    function getColor(d) {
+        return d > 0.8 ? '#f1e740' : d > 0.6 ? '#f39c12' : d > 0.4 ? '#c0392b' : d > 0.2 ? '#8e44ad' : '#2c3e50';
+    }
+
+    function closeModal() {
+        document.getElementById('modalOverlay').style.display = 'none';
+        document.getElementById('modalSpinner').style.display = 'none';
+    }
+
+    map.on('pm:create', (e) => {
+        if (e.shape === 'Rectangle') {
+            const b = e.layer.getBounds();
+            pendingBbox = [b.getSouthWest().lat, b.getSouthWest().lng, b.getNorthEast().lat, b.getNorthEast().lng];
+            document.getElementById('modalOverlay').style.display = 'flex';
+            map.removeLayer(e.layer);
+        }
+    });
+
+    document.getElementById('confirmReinit').onclick = async () => {
+        if (!pendingBbox) return;
+        document.getElementById('modalSpinner').style.display = 'block';
+        document.getElementById('confirmReinit').disabled = true;
+        await reinitializeEngine(pendingBbox);
+        closeModal();
+        document.getElementById('confirmReinit').disabled = false;
+    };
+
+    async function runStep() {
+        const btn = document.getElementById('simBtn');
+        btn.disabled = true;
+        try {
+            const response = await fetch('http://localhost:8000/simulate');
+            const data = await response.json();
+            if (geojsonLayer) map.removeLayer(geojsonLayer);
+            geojsonLayer = L.geoJson(data.geojson, {
+                pointToLayer: (f, l) => L.circleMarker(l, {
+                    radius: 4, fillColor: getColor(f.properties.density),
+                    color: "#000", weight: 0.5, opacity: 1, fillOpacity: 0.9
+                })
+            }).addTo(map);
+            document.getElementById('metrics').innerText = `MSE Loss: ${data.loss.toFixed(6)}\nNodes: ${data.geojson.features.length}\nStatus: ACTIVE`;
+        } catch (e) {
+            document.getElementById('metrics').innerText = "ERROR: API OFFLINE";
+        }
+        btn.disabled = false;
+    }
+
+    async function reinitializeEngine(bbox) {
+        const metricsDiv = document.getElementById('metrics');
+        metricsDiv.innerText = "Reinitializing Matrix...\nFetching OSM Data";
+        try {
+            const response = await fetch('http://localhost:8000/reinit', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ bbox: bbox })
+            });
+            const res = await response.json();
+            if(res.status === "success") {
+                metricsDiv.innerText = `NEW GRID INITIALIZED\nNodes: ${res.nodes}\nEdges: ${res.edges}`;
+            }
+        } catch (e) {
+            metricsDiv.innerText = "INIT FAILED: Check API logs.";
+        }
+    }
+</script>
+
+</body>
+</html>
