@@ -25,7 +25,7 @@ The Kinematic Tensor Engine bypasses traditional point-to-point pathfinding to t
 
 ## 📖 Deep Dive & Research
 For a comprehensive breakdown of the multivariable calculus, fluid dynamics, and neural architecture used in this project, read the full paper:
-👉 [Research & Methodology Article](./RESEARCH_ARTICLE.md)
+👉 [Research & Methodology Article](./white-paper.md)
 
 ## Getting Started
 
